@@ -3,6 +3,7 @@ import assert from "node:assert";
 import {
   isOpencodeFreeTierRefusal,
   isOpencodeFreeTierRefusalForProvider,
+  isOpencodeFreeUsageLimitRefusalForProvider,
   isOpencodeGeoBlocked,
   isOpencodeUserBlocked,
 } from "../../open-sse/executors/opencodeGeoBlock.ts";
@@ -103,6 +104,87 @@ describe("free-tier refusal parity: executor predicate, classifier and auth guar
       );
     });
   }
+});
+
+// Verbatim upstream 429 (2026-11-16) for the free lane refusing a request it will not
+// spend free capacity on — measured on the OpenCode CLI's conversation-title call, whose
+// system prompt is the deciding payload (the same model/account/session serves a coding
+// turn 200 in the same second).
+const FREE_USAGE_LIMIT_BODY = JSON.stringify({
+  type: "error",
+  error: {
+    type: "FreeUsageLimitError",
+    message:
+      "Free usage limit reached. Free models work in OpenCode (https://opencode.ai); " +
+      "subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+  },
+});
+const FREE_USAGE_LIMIT_MESSAGE =
+  "Free usage limit reached. Free models work in OpenCode (https://opencode.ai); " +
+  "subscribe to OpenCode Go to keep going: https://opencode.ai/go";
+// The paid lane's real quota exhaustion: same status, different sentence — it keeps
+// its model lockout, so the predicate must not swallow it.
+const MONTHLY_LIMIT_BODY = JSON.stringify({
+  type: "error",
+  error: { type: "RateLimitError", message: "monthly usage limit reached for this key" },
+});
+
+describe("free-usage-limit refusal (429) is request-scoped", () => {
+  it("matches the upstream body for the opencode family", () => {
+    for (const provider of ["opencode", "opencode-zen", "opencode-go"]) {
+      assert.strictEqual(
+        isOpencodeFreeUsageLimitRefusalForProvider(provider, 429, FREE_USAGE_LIMIT_BODY),
+        true
+      );
+    }
+  });
+  it("matches the relayed message alone", () => {
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", 429, FREE_USAGE_LIMIT_MESSAGE),
+      true
+    );
+  });
+  it("carries the opencode provider scope", () => {
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider("groq", 429, FREE_USAGE_LIMIT_BODY),
+      false
+    );
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider(null, 429, FREE_USAGE_LIMIT_BODY),
+      false
+    );
+  });
+  it("only recognizes 429", () => {
+    for (const status of [200, 400, 403, 451, 500]) {
+      assert.strictEqual(
+        isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", status, FREE_USAGE_LIMIT_BODY),
+        false
+      );
+    }
+  });
+  it("leaves the paid lane's monthly limit to its own handling", () => {
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", 429, MONTHLY_LIMIT_BODY),
+      false
+    );
+  });
+  it("rejects empty and null bodies", () => {
+    assert.strictEqual(isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", 429, ""), false);
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", 429, null),
+      false
+    );
+  });
+  it("stays separate from the 403/451 predicate that drives shape replay", () => {
+    assert.strictEqual(
+      isOpencodeFreeTierRefusalForProvider("opencode-zen", 429, FREE_USAGE_LIMIT_BODY),
+      false
+    );
+    assert.strictEqual(
+      isOpencodeFreeUsageLimitRefusalForProvider("opencode-zen", 403, REFUSAL_BODY),
+      false
+    );
+  });
 });
 
 describe("free-tier refusal classification scope", () => {

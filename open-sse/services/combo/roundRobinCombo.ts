@@ -1235,7 +1235,7 @@ export async function handleRoundRobinCombo({
                       : undefined,
                 }
               : undefined;
-          const scopedFailure = isScopedFailure(result, errorText, structuredError);
+          const scopedFailure = isScopedFailure(result, errorText, structuredError, provider);
           const fallbackResult = checkFallbackError(
             result.status,
             errorText,

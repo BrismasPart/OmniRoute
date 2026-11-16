@@ -922,7 +922,7 @@ export async function executeTargetAttempt(
     // not decide whether fallback happens, including for generic 400 responses.
     const scopedFailure =
       (provider === "muse-code" && isMusePolicyRefusal(result.status, errorText)) ||
-      isScopedFailure(result, errorText, structuredError);
+      isScopedFailure(result, errorText, structuredError, provider);
 
     // #8375: input-bound request-scoped failures (context_length_exceeded) are
     // deterministic for the same input — retrying on other accounts of the same

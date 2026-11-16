@@ -149,3 +149,32 @@ export function isOpencodeFreeTierRefusalForProvider(
   if (!provider || !provider.toLowerCase().startsWith("opencode")) return false;
   return isOpencodeFreeTierRefusal(status, bodyText);
 }
+
+// Free-usage-limit refusal (observed 2026-11-16): the free lane answers 429
+// `FreeUsageLimitError` to a request it will not spend free capacity on. The OpenCode
+// CLI's conversation-title call reproduces it 10/10 (its system prompt is the deciding
+// payload; swapping it for the agent prompt, or paraphrasing the passage that says the
+// message must only be named, turns the same body into a 200), while a coding turn from
+// the same model, account and session answers 200 within the same second.
+//
+// The verdict is therefore request-scoped. The `retry-after` such a response carries
+// (~seconds to 00:00 UTC) describes the free window, not the model — taken as a model
+// lockout it benches a healthy model for a day and the combo answers "ALL_TARGETS_SKIPPED"
+// until the reset, which is exactly the incident this predicate prevents.
+//
+// Deliberately separate from isOpencodeFreeTierRefusal (403/451): that predicate also
+// drives the shape-replay and egress-probe paths, which must not run for every 429.
+// Both signals are exact substrings; no looser phrasing is recognized (fail closed).
+const FREE_USAGE_LIMIT_SIGNALS = ["freeusagelimiterror", "free usage limit reached"];
+
+/** Whether `status` is the free lane's 429 request-scoped refusal from this provider. */
+export function isOpencodeFreeUsageLimitRefusalForProvider(
+  provider: string | null | undefined,
+  status: number,
+  bodyText: string | null
+): boolean {
+  if (status !== 429) return false;
+  if (!provider || !provider.toLowerCase().startsWith("opencode")) return false;
+  const lower = String(bodyText ?? "").toLowerCase();
+  return FREE_USAGE_LIMIT_SIGNALS.some((signal) => lower.includes(signal));
+}

@@ -128,7 +128,10 @@ import { resolveAvalancheCooldownMs } from "@omniroute/open-sse/services/account
 import { isModelScopedAccessDenial } from "@omniroute/open-sse/services/accountFallback/modelScopedAccessDenial.ts";
 import { isModelUnsupported401 } from "@omniroute/open-sse/services/accountFallback/perModelFailureScope.ts";
 import { postOutputFailureReachesLockout } from "@omniroute/open-sse/services/accountFallback/postOutputFailureStreak.ts";
-import { isOpencodeFreeTierRefusalForProvider } from "@omniroute/open-sse/executors/opencodeGeoBlock.ts";
+import {
+  isOpencodeFreeTierRefusalForProvider,
+  isOpencodeFreeUsageLimitRefusalForProvider,
+} from "@omniroute/open-sse/executors/opencodeGeoBlock.ts";
 import { isOpencodeFreeTierSkipped } from "@omniroute/open-sse/services/opencodeFreeTierSkip.ts";
 import { isLocalProvider } from "@omniroute/open-sse/config/providerRegistry.ts";
 import { COOLDOWN_MS, RateLimitReason } from "@omniroute/open-sse/config/constants.ts";
@@ -2718,6 +2721,13 @@ export async function markAccountUnavailable(
 
     // Request-scoped refusal: nothing about it belongs on this account or this model.
     if (isOpencodeFreeTierRefusalForProvider(provider, status, errorText))
+      return { shouldFallback: true, cooldownMs: 0 };
+
+    // Same scope for the free lane's 429 "Free usage limit reached": the upstream serves a
+    // coding turn from this very model and account in the same second, so the refusal
+    // describes the request it got, not the model. Its retry-after (the free window's reset,
+    // ~24 h) would otherwise become a model lockout and take the whole combo down.
+    if (isOpencodeFreeUsageLimitRefusalForProvider(provider, status, errorText))
       return { shouldFallback: true, cooldownMs: 0 };
 
     // A stream content stall gave up on this one request (usually a long reasoning turn

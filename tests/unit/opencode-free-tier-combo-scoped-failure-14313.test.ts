@@ -75,3 +75,81 @@ test("an ordinary auth 403 is NOT request-scoped (unchanged)", () => {
     false
   );
 });
+
+// 2026-11-16: the free lane also answers 429 `FreeUsageLimitError` to a request it will
+// not spend free capacity on (measured: the OpenCode CLI's conversation-title call, 10/10,
+// while a coding turn from the same model/account/session answers 200 in the same second).
+// The response carries `retry-after` ≈ seconds to 00:00 UTC; taken as a target cooldown it
+// marks the combo semaphore rate-limited for ~24 h, so every later request waits out the
+// semaphore timeout and the combo answers 503 — the block this scoping prevents.
+const FREE_USAGE_LIMIT_BODY = JSON.stringify({
+  type: "error",
+  error: {
+    type: "FreeUsageLimitError",
+    message:
+      "Free usage limit reached. Free models work in OpenCode (https://opencode.ai); " +
+      "subscribe to OpenCode Go to keep going: https://opencode.ai/go",
+  },
+});
+const FREE_USAGE_LIMIT_MESSAGE =
+  "Free usage limit reached. Free models work in OpenCode (https://opencode.ai); " +
+  "subscribe to OpenCode Go to keep going: https://opencode.ai/go";
+
+function freeUsageLimitResponse(status = 429, body = FREE_USAGE_LIMIT_BODY): Response {
+  return new Response(body, {
+    status,
+    headers: { "content-type": "application/json", "retry-after": "85085" },
+  });
+}
+
+test("a free-usage-limit 429 from opencode is a combo request-scoped failure", () => {
+  for (const provider of ["opencode", "opencode-zen", "opencode-go"]) {
+    assert.equal(
+      isComboRequestScopedFailure(
+        freeUsageLimitResponse(),
+        FREE_USAGE_LIMIT_MESSAGE,
+        { type: "FreeUsageLimitError" },
+        provider
+      ),
+      true
+    );
+  }
+});
+
+test("the free-usage-limit body alone marks the failure request-scoped", () => {
+  assert.equal(
+    isComboRequestScopedFailure(
+      freeUsageLimitResponse(),
+      FREE_USAGE_LIMIT_BODY,
+      undefined,
+      "opencode-zen"
+    ),
+    true
+  );
+});
+
+test("the same 429 on a foreign provider keeps its own handling", () => {
+  assert.equal(
+    isComboRequestScopedFailure(
+      freeUsageLimitResponse(),
+      FREE_USAGE_LIMIT_MESSAGE,
+      { type: "FreeUsageLimitError" },
+      "groq"
+    ),
+    false
+  );
+  // Without a provider the predicate cannot scope the body to opencode, so it must not
+  // claim the failure — the visitor that knows the provider passes it explicitly.
+  assert.equal(isComboRequestScopedFailure(freeUsageLimitResponse(), FREE_USAGE_LIMIT_BODY), false);
+});
+
+test("a paid-lane monthly limit 429 stays a real target cooldown", () => {
+  const body = JSON.stringify({
+    type: "error",
+    error: { type: "RateLimitError", message: "monthly usage limit reached for this key" },
+  });
+  assert.equal(
+    isComboRequestScopedFailure(freeUsageLimitResponse(429, body), body, undefined, "opencode-zen"),
+    false
+  );
+});

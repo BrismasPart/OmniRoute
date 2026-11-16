@@ -34,7 +34,10 @@ import { isModelNotFound404 } from "../accountFallback/perModelFailureScope.ts";
 import { isRequestScoped400 } from "../accountFallback/requestScoped400.ts";
 import { isAssistantPrefillUnsupported400 } from "../assistantPrefillError.ts";
 import { isResourceNotFoundResponse } from "../errorClassifier.ts";
-import { isOpencodeFreeTierRefusal } from "../../executors/opencodeGeoBlock.ts";
+import {
+  isOpencodeFreeTierRefusal,
+  isOpencodeFreeUsageLimitRefusalForProvider,
+} from "../../executors/opencodeGeoBlock.ts";
 import { isChatGptWebBridgeFailure } from "../../utils/chatgptWebBridgeFailure.ts";
 import { getTrustedLocalRateLimitResponse } from "../rateLimitManager/errors.ts";
 import { TRANSLATION_FAILURE_CODE } from "../../handlers/chatCore/translationFailure.ts";
@@ -502,7 +505,8 @@ export function shouldRecordModelLockoutForComboFailure(
 export function isComboRequestScopedFailure(
   response: Response,
   errorText: string,
-  error?: { code?: string | null; type?: string | null }
+  error?: { code?: string | null; type?: string | null },
+  provider?: string | null
 ): boolean {
   return (
     isLocalModelPolicyResponse(response) ||
@@ -511,6 +515,14 @@ export function isComboRequestScopedFailure(
     (response.status === 404 && isResourceNotFoundResponse(errorText)) ||
     // #14313: body-only free-tier refusals (relayed sentence, no error.type kept).
     isOpencodeFreeTierRefusal(response.status, errorText) ||
+    // 2026-11-16: the opencode free lane answers 429 `FreeUsageLimitError` to a request
+    // it will not spend free capacity on (the CLI's conversation-title call reproduces it
+    // 10/10) while the same model/account/session serves a coding turn 200 in the same
+    // second. Its retry-after is the free window's reset (~24 h), so letting the failure
+    // run the normal 429 path benches a healthy target for the rest of the day. Provider
+    // scoping is explicit here: the 403/451 sibling above is body-only because that
+    // sentence names OpenCode, and a foreign 429 must keep its own handling.
+    isOpencodeFreeUsageLimitRefusalForProvider(provider, response.status, errorText) ||
     // Prefill ban: the body's shape, not the model/connection — even without error.type.
     isAssistantPrefillUnsupported400(response.status, errorText)
   );
