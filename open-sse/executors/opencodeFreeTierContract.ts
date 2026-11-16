@@ -167,23 +167,45 @@ export function _setOpencodeFreeModelsForTests(ids: readonly string[] | null): v
   freeCatalogCache = null;
 }
 
+/**
+ * The free ids a catalog snapshot implies, or `null` when the snapshot cannot classify
+ * free tier at all.
+ *
+ * No cost table for the opencode family means the models.dev half of the signal has not
+ * synced. Returning an empty set there would mark every model premium (a live free id
+ * would then be refused a keyless request and lose the free lane), so it answers `null`
+ * and lets the legacy heuristic decide — same answer as a never-synced catalog.
+ * Exported for testability.
+ */
+export function deriveFreeModelIds(
+  available: ReadonlySet<string>,
+  pricing: Record<string, { input: number; output: number }> | null | undefined,
+  statusOf: (id: string) => string | undefined
+): Set<string> | null {
+  if (available.size === 0) return null;
+  const byProvider =
+    pricing?.[OPENCODE_CATALOG_PROVIDER_IDS[0]] ?? pricing?.[OPENCODE_CATALOG_PROVIDER_IDS[1]];
+  if (!byProvider || Object.keys(byProvider).length === 0) return null;
+  const free = new Set<string>();
+  for (const id of available) {
+    const cost = byProvider[id];
+    if (!cost || cost.input !== 0 || cost.output !== 0) continue;
+    if (statusOf(id) === "deprecated") continue;
+    free.add(id);
+  }
+  return free;
+}
+
 /** The free ids the synced catalog implies, or `null` when nothing has been synced. */
 function deriveFreeIdsFromCatalog(): Set<string> | null {
   try {
     const available = readSyncedOpencodeFamilyModelIds();
     if (available.size === 0) return null;
-    const free = new Set<string>();
-    const pricing = getModelsDevPricing();
-    const byProvider =
-      pricing[OPENCODE_CATALOG_PROVIDER_IDS[0]] ?? pricing[OPENCODE_CATALOG_PROVIDER_IDS[1]];
-    for (const id of available) {
-      const cost = byProvider?.[id];
-      if (!cost || cost.input !== 0 || cost.output !== 0) continue;
-      const status = getSyncedCapability(OPENCODE_CATALOG_PROVIDER_IDS[0], id)?.status;
-      if (status === "deprecated") continue;
-      free.add(id);
-    }
-    return free;
+    return deriveFreeModelIds(
+      available,
+      getModelsDevPricing(),
+      (id) => getSyncedCapability(OPENCODE_CATALOG_PROVIDER_IDS[0], id)?.status
+    );
   } catch {
     // No DB / no synced pricing yet: no catalog, fall back to the legacy heuristic.
     return null;
