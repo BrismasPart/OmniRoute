@@ -217,6 +217,7 @@ import {
   hasNativeWebSearchTool,
   resolveWebSearchRouteOverride,
 } from "@omniroute/open-sse/services/webSearchRouting.ts";
+import { resolveTitleRouteOverride } from "@omniroute/open-sse/services/titleRouting.ts";
 import {
   generateSessionId as generateStableSessionId,
   touchSession,
@@ -1071,6 +1072,24 @@ async function handleChatImplementation(
       resolvedModelStr = wsRoute.model;
       body = { ...body, model: wsRoute.model };
     }
+  }
+
+  // Conversation-title routing: the CLI harness names the session with an auxiliary call
+  // to this same endpoint. It is a labeling task, not the user's work, and the free lane
+  // refuses it outright — so send it to the route the operator configured
+  // (OMNIROUTE_TITLE_ROUTE_MODEL, e.g. "auto") instead of walking the main combo's targets.
+  const titleRoute = resolveTitleRouteOverride(
+    resolvedModelStr,
+    body,
+    process.env.OMNIROUTE_TITLE_ROUTE_MODEL
+  );
+  if (titleRoute.wasRouted) {
+    log.info(
+      "TITLE-ROUTE",
+      `title request → model override: ${resolvedModelStr} → ${titleRoute.model}`
+    );
+    resolvedModelStr = titleRoute.model;
+    body = { ...body, model: titleRoute.model };
   }
 
   // Explicit reasoning-routing policies are the final model-routing layer before
