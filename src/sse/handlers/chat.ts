@@ -2823,7 +2823,16 @@ async function handleSingleModelChat(
       // Combo targets never emergency-hop: the combo is the operator's fallback policy
       // (target-level orchestration plus the global fallback #689 after it), and a
       // per-target hop burns extra upstream calls against exhausted providers (#1731).
-      const emergencyHopAllowed = !runtimeOptions.providerFailoverPending && !comboName;
+      // Automated probes (model tests, combo health checks, assessments) never hop either:
+      // the probe exists to report what THIS model answered, so a rerouted 200 would
+      // report a healthy model where the target actually returned 402 — measured
+      // 2026-11-17 on the provider test button (dashboard showed green for a model whose
+      // own attempt was `402 insufficient credits`). The probe is also pinned to a
+      // connection, so spend on another provider is the operator's least intent here.
+      const emergencyHopAllowed =
+        !runtimeOptions.providerFailoverPending &&
+        !comboName &&
+        runtimeOptions.automatedProbe !== true;
       if (!runtimeOptions.emergencyFallbackTried && emergencyHopAllowed) {
         const fallbackDecision = await resolveEmergencyFallbackDecision(
           Number(result.status || 0),

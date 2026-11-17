@@ -27,6 +27,8 @@ const { clearProviderFailure } = await import("../../open-sse/services/accountFa
 const { OMNIROUTE_RESPONSE_HEADERS } = await import("../../src/shared/constants/headers.ts");
 const { withEmergencyFallbackHeader } =
   await import("../../src/sse/handlers/emergencyFallbackHeader.ts");
+const { SELF_HOP_HEADER, ownListenerSelfHopToken } =
+  await import("../../open-sse/utils/selfHop.ts");
 
 const EMERGENCY_HEADER = "X-OmniRoute-Emergency-Fallback";
 
@@ -146,6 +148,48 @@ test("a failed emergency hop does not leak the header onto the primary error", a
   );
   await response.json();
 
+  assert.equal(response.status, 402);
+  assert.equal(response.headers.get(EMERGENCY_HEADER), null);
+});
+
+// Reported from the provider tab test button (2026-11-17): the pong probe for a model whose
+// own attempt answered `402 insufficient credits` came back 200 because the emergency
+// fallback rerouted it to the nvidia free model — the dashboard painted that model green.
+// A probe exists to report what THIS target answered, so it must never hop.
+test("an automated probe reports the target's own 402 instead of the emergency hop", async () => {
+  await seedConnection("openai", { apiKey: "sk-openai-billing-probe-hdr" });
+  await seedConnection("nvidia", { apiKey: "sk-nvidia-fallback-probe-hdr" });
+  let calls = 0;
+
+  globalThis.fetch = async () => {
+    calls += 1;
+    if (calls === 1) {
+      return new Response(JSON.stringify({ error: { message: "insufficient credits" } }), {
+        status: 402,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    return buildOpenAIResponse("served by fallback", "nvidia/nemotron-3.5-super-vl-120b-a12b");
+  };
+
+  const response = await handleChat(
+    buildRequest({
+      headers: {
+        [SELF_HOP_HEADER]: ownListenerSelfHopToken(),
+        "x-internal-test": "combo-health-check",
+        "x-omniroute-no-cache": "true",
+      },
+      body: {
+        model: "openai/gpt-4.1",
+        stream: true,
+        max_tokens: 64,
+        messages: [{ role: "user", content: "Reply with exactly: pong" }],
+      },
+    })
+  );
+  await response.text();
+
+  assert.equal(calls, 1);
   assert.equal(response.status, 402);
   assert.equal(response.headers.get(EMERGENCY_HEADER), null);
 });
