@@ -202,6 +202,9 @@ const nextConfig = {
   // accept for image-bearing requests; tune via env if a deployment needs
   // more.
   experimental: {
+    // Next.js nudges coding agents to run a security upgrade when the installed
+    // version has a published advisory (set by `next upgrade --agent=security`).
+    agentUpgrade: "security",
     // macOS development only: avoid the EBADF spawn failures of Next's TypeScript
     // CLI and static-path worker (see scripts/build/macosDevWorkaround.mjs).
     ...macosDevExperimentalOverrides(),
